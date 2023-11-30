@@ -174,6 +174,47 @@ def is_ubuntu():
     except FileNotFoundError:
         return False
 
+def parse_cpu_range(range_str):
+    if '-' in range_str:
+        start, end = map(int, range_str.split('-'))
+        return list(range(start, end + 1))
+    else:
+        return [int(range_str)]
+
+def get_filtered_numa_cores(numa_cores, isolcpus):
+    filtered_cores = [core for core in numa_cores if core not in isolcpus]
+    return filtered_cores
+
+def get_numa_node_cores(numa_node):
+    try:
+        # Read /proc/cmdline and get the isolated cores
+        with open("/proc/cmdline") as f:
+            cmdline = f.read()
+
+        isolcpus = re.search(r'isolcpus=(?:managed_irq,domain,)?([\d,]+)', cmdline)
+        if isolcpus:
+            isolcpus = isolcpus.group(1).split(",")
+        else:
+            isolcpus = []
+
+        output = subprocess.check_output("lscpu", text=True)
+        ret = []
+        for line in output.splitlines():
+            match = re.match(r"NUMA node(\d) CPU\(s\):\s*(.*)", line)
+            if match:
+                node, cores = match.groups()
+                if node == numa_node:
+                    numa_cores = []
+                    core_ranges = cores.split(',')
+                    for core_range in core_ranges:
+                        numa_cores.extend(parse_cpu_range(core_range.strip()))
+                    str_numa_cores = [str(core) for core in numa_cores]
+                    ret = get_filtered_numa_cores(str_numa_cores, isolcpus)
+        return ret
+    except subprocess.CalledProcessError:
+        print("Error: Unable to execute 'lscpu' command")
+        return []
+
 def get_numa_node(flag_conf: Flags):
     cpu_number = int(subprocess.check_output("lscpu -b -p=Core,Socket | grep -v '^#' | sort -u | wc -l", shell=True))
     if os.getcwd().find("staserver") != -1 and cpu_number >= 32 and flag_conf.numa_node is None:
@@ -183,13 +224,13 @@ def get_numa_node(flag_conf: Flags):
         raise ValueError("Please specify numa_node 0 for staserver in flags.csv files with format '#! numa_node/0'")
     if flag_conf.numa_node is None or flag_conf.numa_node == "-1":
         if is_ubuntu():
-            numa_node_0_processors = get_physcpubind_cores('0')
-            numa_node_1_processors = get_physcpubind_cores('1')
+            numa_node_0_processors = get_numa_node_cores('0')
+            numa_node_1_processors = get_numa_node_cores('1')
             numa_node_processors = numa_node_0_processors + numa_node_1_processors
             return f"numactl --physcpubind={','.join(numa_node_processors)}"
         return ""
     try:
-        numa_node_processors = get_physcpubind_cores(flag_conf.numa_node)
+        numa_node_processors = get_numa_node_cores(flag_conf.numa_node)
         return f"numactl --physcpubind={','.join(numa_node_processors)}"
     except Exception as e:
         raise ValueError(f"An error occurred while getting the processor cores: {str(e)}")
