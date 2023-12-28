@@ -1,9 +1,7 @@
-#!/bin/bash
-# Dynamic environment variable and binary execution script
-
 usage() {
-    echo "Usage: $0 [ENV_VAR=value ...] /path/to/binary [arguments...]"
+    echo "Usage: $0 [ENV_VAR=value ...] [onload] /path/to/binary [arguments...]"
     echo "  ENV_VAR=value    Set environment variable. Repeat for multiple variables."
+    echo "  onload           If provided, use 'onload' command to start the binary."
     echo "  /path/to/binary  Specify the binary to execute."
     echo "  arguments...     Arguments passed to the binary."
     exit 1
@@ -14,6 +12,7 @@ if [ "$#" -eq 0 ]; then
 fi
 
 declare -A env_vars
+use_onload=0
 
 # Loop through the arguments
 while [ "$#" -gt 0 ]; do
@@ -23,6 +22,9 @@ while [ "$#" -gt 0 ]; do
             key=${1%%=*}
             value=${1#*=}
             env_vars[$key]=$value
+            ;;
+        onload)
+            use_onload=1
             ;;
         *)
             binary=$1
@@ -66,10 +68,15 @@ if [ -z "$available_cores" ]; then
     exit 1
 fi
 
-# Execute the binary if it is found and executable
+# Execute the binary with or without 'onload' based on the parameter
 if [ -x "$binary" ]; then
-    taskset -c $available_cores $binary "$@"
+    if [ "$use_onload" -eq 1 ]; then
+        onload taskset -c $available_cores $binary "$@"
+    else
+        taskset -c $available_cores $binary "$@"
+    fi
 else
     echo "Error: Binary '$binary' not found or not executable."
     exit 2
 fi
+
