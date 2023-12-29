@@ -1,36 +1,35 @@
 #!/bin/bash
-arr=`ps -ef | grep "./white" | grep -v grep | awk '{print $2}'`
 
-name="order_sender"
-echo "$name"
-i=32
-for ays in $arr
-do
-    q=`ps -T -p $ays|awk '{print $2","$5}'`
-    for c in $q
-    do
-      arrIn=(${c//,/ })
-      if [[ ${arrIn[1]} == "$name"* ]]
-      then
-          echo `taskset -pc ${i} ${arrIn[0]}`
-          i=`expr $i + 1`
-      fi
-    done
+set_affinity() {
+    local thread_id=$1
+    local cpu=$2
+    echo "Setting affinity of thread $thread_id to CPU $cpu"
+    taskset -pc $cpu $thread_id
+}
+
+check_and_set_threads() {
+    local process_id=$1
+    local name_order_sender="order_sender"
+    local name_efvi_receiver="EfviReceiver"
+    local cpu_order_sender=32
+    local cpu_efvi_receiver=17
+
+    local threads=$(ps -T -p $process_id | awk 'NR>1{print $2, $NF}')
+    while read -r tid tname; do
+        if [[ $tname == "$name_order_sender"* ]]; then
+            set_affinity $tid $cpu_order_sender
+            ((cpu_order_sender++))
+        elif [[ $tname == "$name_efvi_receiver"* ]]; then
+            set_affinity $tid $cpu_efvi_receiver
+        fi
+    done <<< "$threads"
+}
+
+echo "Scanning for processes with 'white'..."
+processes=$(pgrep -f "white")
+for pid in $processes; do
+    echo "Checking threads in process $pid..."
+    check_and_set_threads $pid
 done
 
-name="EfviReceiver"
-echo "$name"
-i=17
-for ays in $arr
-do
-    q=`ps -T -p $ays|awk '{print $2","$5}'`
-    for c in $q
-    do
-      arrIn=(${c//,/ })
-      if [[ ${arrIn[1]} == "$name"* ]]
-      then
-          echo `taskset -pc ${i} ${arrIn[0]}`
-          #i=`expr $i + 1`
-      fi
-    done
-done
+echo "Affinity setting completed."
